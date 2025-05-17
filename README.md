@@ -9,9 +9,9 @@ The unit accepts two 64-bit operands, a small control word, and returns the comp
 ## 1  Arithmetic Logic Unit (ALU)  
 The ALU performs all integer add-subtract operations defined by the RV64I ISA.
 
-* **Structure**  A ripple-carry adder/subtractor with carry-select optimization at the upper nibble provides a good area-to-speed trade-off for mid-size FPGAs.  
-* **Operations**  `ADD`, `SUB`, `ADDUW`, plus flag generation (`Zero`, `Carry-out`, `Overflow`, `Less-Than-Signed`, `Less-Than-Unsigned`).  
-* **Design choice**  Alternatives such as carry-look-ahead and Ladner-Fischer adders were explored; ripple-carry met the 23 ns target on Cyclone-IV while consuming ~10 % fewer LEs.
+* **Structure**  A ripple-carry adder/subtractor with carry-select optimisation at the upper nibble provides a good area-to-speed trade-off for mid-size FPGAs.  
+* **Operations**  `ADD`, `SUB`, `ADDUW`, plus flag generation (`Zero`, `Carry-out`, `Overflow`, **`ALTB`  (A < B, signed)**, **`ALTBU`  (A < B, unsigned)**).  
+* **Design choice**  Alternatives such as carry-look-ahead and Ladner-Fischer adders were explored; ripple-carry met the 23 ns target on Cyclone-IV while consuming ~10 % fewer logic elements.
 
 ---
 
@@ -42,7 +42,7 @@ The LU uses a one-hot control bus so only the selected function contributes to t
 
 ### 4.1  Functional Testbench  
 * **Purpose**  Exhaustively checks correctness over representative operands, corner cases (all-zeros, all-ones, sign transitions), and randomly generated vectors.  
-* **Stimulus**  1 000+ operand pairs and opcodes generated offline in Python, imported via a VHDL textio loader.  
+* **Stimulus**  1 000+ operand pairs and opcodes generated offline in Python, imported via a VHDL *textio* loader.  
 * **Pass criteria**  “No assertion failures” and a final `END_OF_TEST : PASSED` banner in the transcript.
 
 ### 4.2  Timing Testbench  
@@ -58,8 +58,7 @@ The RV64I Execution Unit met every quantitative goal established at project star
 
 * **Timing** – Post-synthesis analysis on an Intel Cyclone IV device reported a worst-case combinational delay of **21.02 ns**, comfortably inside the 23 ns specification.  
 * **Area** – Resource utilisation remained modest at **≈1 500 logic elements** and **15 add-carry chains**, leaving ample head-room for surrounding pipeline logic.  
-* **Functional Coverage** – More than **1 000 randomized operand/opcode pairs** plus directed edge-case vectors (all-zeros, all-ones, overflow crossings, maximum shift counts) executed in ModelSim without a single assertion failure.  
+* **Functional Coverage** – More than **1 000 randomised operand/opcode pairs** plus directed edge-case vectors (all-zeros, all-ones, overflow crossings, maximum shift counts) executed in ModelSim without a single assertion failure.  
 * **Timing Validation** – An SDF-annotated timing testbench confirmed the critical path—64-bit left shift by 63—maintains positive slack under worst-case PVT conditions.  
 
-Waveform captures show crisp, single-cycle responses across arithmetic, logic, and shift operations, with status flags (`Zero`, `Carry-out`, `Overflow`, `Less-Than-Signed`, `Less-Than-Unsigned`) matching the reference model on every cycle. Together, these results verify that the VHDL design is both **functionally correct** and **timing-clean**, ready for drop-in use as the integer core of a RISC-V processor or as an independent FPGA IP block.
-
+Waveform captures show crisp, single-cycle responses across arithmetic, logic, and shift operations, with status flags (`Zero`, `Carry-out`, `Overflow`, `ALTB`, `ALTBU`) matching the reference model on every cycle. **Screenshots of the RTL viewers for the ALU, SLU, and LU blocks, along with ModelSim waveforms for both testbenches, are included in the repository.**
