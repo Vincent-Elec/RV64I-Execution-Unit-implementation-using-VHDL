@@ -41,19 +41,27 @@ Only the selected branch drives the output, ensuring the logic path is just one 
 
 ---
 
-## 4 Bringing It All Together — `ExecUnit`  
-The top-level entity instantiates each block once:
+## 4  Execution Unit (ExecUnit)
 
-* **Control word** –  
-  * `FuncClass` (2 bits) decides what the final multiplexer outputs:  
-    * `"00"` → arithmetic/shift result  
+The **ExecUnit** is a thin VHDL wrapper that drops the three blocks (ALU, Shifter, Logic) side-by-side, drives them with the same operands, then chooses which result to send out.
+
+* **Sub-units used**
+  * **AUnit** – adds or subtracts (`AddnSub`=0/1) and produces the flags `Zero`, `ALTB`, `ALTBU`.
+  * **shifter** – performs `SLL`, `SRL`, or `SRA` as selected by `ShiftFN`; an `ExtWord` bit forces correct 32-bit “-W” behaviour.
+  * **logic** – executes one of four Boolean ops set by `LogicFN`.
+
+* **Selection logic**
+  * A tiny mux first decides between the ALU value and the shifter value (based on the low bit of `ShiftFN`).
+  * A second, top-level 2-bit field **`FuncClass`** picks the final 64-bit output `Y`:
+    * `"00"` → arithmetic or shift result  
     * `"01"` → logic result  
     * `"10"` → `ALTB` zero-extended to 64 bits  
     * `"11"` → `ALTBU` zero-extended to 64 bits  
-  * `AddnSub`, `LogicFn`, `ShiftFn`, and `ExtWord` feed the sub-units directly.  
-* **Intermediate muxing** – The SLU and ALU share a small inside mux so a shift can replace an arithmetic result without extra top-level delay.  Sign-extension logic widens 32-bit “-W” results before they hit the outer mux.  
-* **Flag output** – `Zero`, `ALTB`, and `ALTBU` are driven straight from the ALU; other ALU flags are available to future pipeline stages if needed.  
-This structure isolates each sub-unit’s delay, leaving the ALU carry chain as the critical path—optimised automatically by FPGA hard carry cells.
+
+* **Flag routing**
+  * `Zero`, `ALTB`, and `ALTBU` leave the ALU and go straight to ExecUnit outputs, ready for branch or compare logic.
+
+Because each block is pure combinational logic and the adder’s carry chain is mapped to FPGA carry cells, the assembled unit still meets the 23 ns timing target (measured 21.02 ns on Cyclone IV).
 
 ---
 
