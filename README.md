@@ -2,63 +2,75 @@
 
 ## Introduction  
 This project implements the **Integer Execution Unit** of a 64-bit RISC-V (RV64I) processor in VHDL.  
-The unit accepts two 64-bit operands, a small control word, and returns the computed result plus status flags in a single cycle. Three internal blocks—an **Arithmetic Logic Unit (ALU)**, a **Shift-Logic Unit (SLU)**, and a **Logic Unit (LU)**—are multiplexed together to form the datapath. Verification was carried out in *ModelSim* using both functional and timing testbenches, ensuring correctness and meeting the worst-case propagation-delay target.
+Two 64-bit operands and a small control word enter; a single-cycle result and status flags exit.  
+Three purely combinational blocks—an **Arithmetic Logic Unit (ALU)**, a **Shift-Logic Unit (SLU)**, and a **Logic Unit (LU)**—feed a final multiplexer selected by the decode logic.  
+Functional and timing testbenches in *ModelSim* validate correctness and ensure the design beats a 23 ns worst-case delay budget.
 
 ---
 
-## 1  Arithmetic Logic Unit (ALU)  
-The ALU performs all integer add-subtract operations defined by the RV64I ISA.
-
-* **Structure**  A ripple-carry adder/subtractor with carry-select optimisation at the upper nibble provides a good area-to-speed trade-off for mid-size FPGAs.  
-* **Operations**  `ADD`, `SUB`, `ADDUW`, plus flag generation (`Zero`, `Carry-out`, `Overflow`, **`ALTB`  (A < B, signed)**, **`ALTBU`  (A < B, unsigned)**).  
-* **Design choice**  Alternatives such as carry-look-ahead and Ladner-Fischer adders were explored; ripple-carry met the 23 ns target on Cyclone-IV while consuming ~10 % fewer logic elements.
-
----
-
-## 2  Shift-Logic Unit (SLU)  
-The SLU realises all shift and rotate primitives.
-
-* **Barrel Shifter**  Implements a log₂(N)-stage network (N = 64) so every shift distance is completed in one clock.  
-* **Operations**  `SLL`, `SRL`, `SRA`, with a mode bit that enables 32-bit sign extension for RV32-compatible instructions.  
-* **Masking**  Shift amount is masked to six bits, matching the RISC-V spec and preventing undefined behaviour.
+## 1 Arithmetic Logic Unit (ALU)  
+* **Coding approach** – A generic ripple-carry adder is instantiated once.  Subtraction is obtained by inverting **B** and asserting the adder’s carry-in, so the same hardware handles `ADD`, `SUB`, and 32-bit `ADDUW`.  
+* **Flags generated** –  
+  * `Zero` (result = 0)  
+  * `Carry-out` and `Overflow` from the adder  
+  * **`ALTB`** (A < B, signed) computed as *Overflow ⊕ MSB(result)*  
+  * **`ALTBU`** (A < B, unsigned) given by the inverse of carry-out  
+* **Why ripple-carry?** – For 64 bits it meets timing on Intel Cyclone IV while using about 10 % fewer LUTs than look-ahead options because the FPGA’s hard add-carry chain keeps the path short.
 
 ---
 
-## 3  Logic Unit (LU)  
-A compact gate-level block that executes bit-wise Boolean operations.
-
-| Opcode | Function |
-|--------|----------|
-| `00`   | **AND**  |
-| `01`   | **OR**   |
-| `10`   | **XOR**  |
-| `11`   | **LUI** (pass B-operand) |
-
-The LU uses a one-hot control bus so only the selected function contributes to the critical path.
+## 2 Shift-Logic Unit (SLU)  
+* **Coding approach** – Relies on `numeric_std.shift_left/shift_right`, allowing synthesis to infer a log₂(N)-stage barrel shifter that completes in one clock.  
+* **Operations** – `SLL`, `SRL`, `SRA`; arithmetic right shift is achieved by casting the operand to **signed** before shifting.  
+* **Word-extension mode** – An `ExtWord` bit forces 32-bit behaviour for “-W” instructions and masks the shift amount so only legal distances (0 … 31) are used in that mode.  
+* **Safe shifts** – High bits of the shift count are zeroed, preventing undefined distances on the hardware shifter.
 
 ---
 
-## 4  Verification Strategy  
+## 3 Logic Unit (LU)  
+A single combinational `case` statement implements four Boolean functions:  
 
-### 4.1  Functional Testbench  
-* **Purpose**  Exhaustively checks correctness over representative operands, corner cases (all-zeros, all-ones, sign transitions), and randomly generated vectors.  
-* **Stimulus**  1 000+ operand pairs and opcodes generated offline in Python, imported via a VHDL *textio* loader.  
-* **Pass criteria**  “No assertion failures” and a final `END_OF_TEST : PASSED` banner in the transcript.
+| Selector | Function |
+|----------|----------|
+| `00` | **LUI-style upper-immediate** load (upper 20 bits of **B**) |
+| `01` | **XOR** |
+| `10` | **OR** |
+| `11` | **AND** |
 
-### 4.2  Timing Testbench  
-* **Purpose**  Measures worst-case propagation delay from input transition to stable output under back-annotated SDF.  
-* **Method**  Applies the path-worst pattern (64-bit logical left shift by 63) on every rising edge, captures `t_HL`, and asserts it is < 23 ns.  
-
-Both benches run inside **ModelSim-Intel Edition 2023.1** and are automated through `.do` scripts (`run_func.do`, `run_timing.do`).
+Only the selected branch drives the output, ensuring the logic path is just one gate deep.
 
 ---
 
-### Conclusion  
-The RV64I Execution Unit met every quantitative goal established at project start-up:
+## 4 Bringing It All Together — `ExecUnit`  
+The top-level entity instantiates each block once:
 
-* **Timing** – Post-synthesis analysis on an Intel Cyclone IV device reported a worst-case combinational delay of **21.02 ns**, comfortably inside the 23 ns specification.  
-* **Area** – Resource utilisation remained modest at **≈1 500 logic elements** and **15 add-carry chains**, leaving ample head-room for surrounding pipeline logic.  
-* **Functional Coverage** – More than **1 000 randomised operand/opcode pairs** plus directed edge-case vectors (all-zeros, all-ones, overflow crossings, maximum shift counts) executed in ModelSim without a single assertion failure.  
-* **Timing Validation** – An SDF-annotated timing testbench confirmed the critical path—64-bit left shift by 63—maintains positive slack under worst-case PVT conditions.  
+* **Control word** –  
+  * `FuncClass` (2 bits) decides what the final multiplexer outputs:  
+    * `"00"` → arithmetic/shift result  
+    * `"01"` → logic result  
+    * `"10"` → `ALTB` zero-extended to 64 bits  
+    * `"11"` → `ALTBU` zero-extended to 64 bits  
+  * `AddnSub`, `LogicFn`, `ShiftFn`, and `ExtWord` feed the sub-units directly.  
+* **Intermediate muxing** – The SLU and ALU share a small inside mux so a shift can replace an arithmetic result without extra top-level delay.  Sign-extension logic widens 32-bit “-W” results before they hit the outer mux.  
+* **Flag output** – `Zero`, `ALTB`, and `ALTBU` are driven straight from the ALU; other ALU flags are available to future pipeline stages if needed.  
+This structure isolates each sub-unit’s delay, leaving the ALU carry chain as the critical path—optimised automatically by FPGA hard carry cells.
 
-Waveform captures show crisp, single-cycle responses across arithmetic, logic, and shift operations, with status flags (`Zero`, `Carry-out`, `Overflow`, `ALTB`, `ALTBU`) matching the reference model on every cycle. **Screenshots of the RTL viewers for the ALU, SLU, and LU blocks, along with ModelSim waveforms for both testbenches, are included in the repository.**
+---
+
+## 5 Verification Strategy  
+* **Functional testbench** – Runs > 1 000 random and corner-case vectors across every opcode; finishes only if no assertions trip.  
+* **Timing testbench** – Loads the post-layout SDF file, applies the path-worst 64-bit left-shift, and asserts total propagation delay < 23 ns.  
+Both benches are scripted and run automatically in *ModelSim-Intel Edition 2023.1*.
+
+---
+
+## Conclusion  
+| Metric | Result | Target |
+|--------|--------|--------|
+| Worst-case combinational delay | **21.02 ns** | < 23 ns |
+| FPGA area | **≈ 1 500 logic elements** + 15 carry chains | — |
+| Functional failures | **0 / > 1 000 vectors** | 0 |
+| Critical-path slack (post-SDF) | **Positive** | ≥ 0 |
+
+Waveforms show clean single-cycle behaviour across arithmetic, shift, and logic instructions, with flags (`Zero`, `Carry-out`, `Overflow`, `ALTB`, `ALTBU`) matching the reference model cycle-for-cycle.  
+**RTL screenshots of the ALU, SLU, and LU, plus ModelSim waveforms for both testbenches, are included in the repository.**
